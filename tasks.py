@@ -1,29 +1,12 @@
-import logging
-import os
 import pandas as pd
 from queue import Queue
 import numpy as np
 from threading import Thread
 from utils import CITIES
 from external.client import YandexWeatherAPI
-from datetime import date
 import concurrent.futures
-from typing import List, Dict
-
-today = date.today().isoformat()  # YYYY-MM-DD
-
-logs_dir = f"./logs/{today}"
-if not os.path.exists(logs_dir):
-    os.makedirs(logs_dir)
-
-log_filename = f"{logs_dir}/tasks.log"
-logging.basicConfig(
-    filename=log_filename,
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-
-logger = logging.getLogger(__name__)
+from my_logger import logger
+from typing import List, Dict, Union
 
 
 class DataFetchingTask:
@@ -32,7 +15,7 @@ class DataFetchingTask:
         self.weather_results = {}
 
     @staticmethod
-    def get_weather(url):
+    def get_weather(url) -> Dict:
         data = YandexWeatherAPI.get_forecasting(url)
         return data
 
@@ -44,7 +27,7 @@ class DataFetchingTask:
                 weather_data = self.get_weather(url)
                 self.weather_results[city] = weather_data
             except BaseException as e:
-                # logger.error(f"Ошибка по городоу {city}: {str(e)}")
+                logger.error(f"Ошибка по городоу {city}: {str(e)}")
                 pass
             finally:
                 self.queue.task_done()
@@ -64,20 +47,22 @@ class DataFetchingTask:
 
 
 class DataCalculationTask:
-    def __init__(self, data):
+    def __init__(self, data: Dict):
         self.all_data = data
-        self.weather_summary = {}  # self.manager.list()
+        self.weather_summary = {}
 
-    def get_city_temp(self, city, forecast_hours: List = list(range(9, 20))):
+    def get_city_temp(self, city: str, forecast_hours=tuple(range(9, 20))) -> Dict:
         result = {}
         try:
             city_data = self.all_data[city]
         except KeyError:
+            logger.error(f"Не удалось получить прогноз по {city}")
             return result
 
         try:
             forecasts = city_data["forecasts"]
         except KeyError:
+            logger.error(f"По городу {city} отсутсвует в данных поле forecasts")
             return result
 
         for forecast_ in forecasts:
@@ -93,7 +78,7 @@ class DataCalculationTask:
         return result
 
     @staticmethod
-    def good_conditions_counter(hours_data: list):
+    def good_conditions_counter(hours_data: List) -> int:
         right_conditions = ("partly-cloud", "clear", "cloudy", "overcast")
         count = 0
         for hour_data in hours_data:
@@ -102,17 +87,18 @@ class DataCalculationTask:
         return count
 
     @staticmethod
-    def avg_temp(hours_data: list):
+    def avg_temp(hours_data: List) -> Union[int, float]:
         avg_temp = sum([i["temp"] for i in hours_data]) / len(hours_data)
         return avg_temp
 
-    def summarize_weather(self, city) -> List[Dict]:
+    def summarize_weather(self, city: str) -> Dict:
         """считаем среднюю температуру по городу и количество часов без осадков"""
         result = []
         try:
             city_data = self.get_city_temp(city)
         except KeyError:
-            return result
+            logger.error(f"Ошибка с подсчетом средней температуры в городе {city}")
+            return {}
 
         for dt, forecast in city_data.items():
             n_hours_with_good_weather = self.good_conditions_counter(
@@ -127,7 +113,7 @@ class DataCalculationTask:
 
         return {city: result}
 
-    def run_concurrent(self, cities):
+    def run_concurrent(self, cities: List):
         with concurrent.futures.ProcessPoolExecutor() as executor:
             results = executor.map(self.summarize_weather, cities)
 
@@ -136,11 +122,11 @@ class DataCalculationTask:
 
 
 class DataAggregationTask:
-    def __init__(self, data):
+    def __init__(self, data: Dict):
         self.data = data
 
     @staticmethod
-    def process_chunk(chunk):
+    def process_chunk(chunk: List) -> pd.DataFrame:
         data = []
         dates = set()
 
@@ -164,7 +150,6 @@ class DataAggregationTask:
             + [f"Температура, средняя ({date})" for date in dates]
             + [f"Без осадков, часов ({date})" for date in dates]
         )
-
         df = pd.DataFrame(data, columns=columns)
         return df
 
@@ -197,10 +182,10 @@ class DataAggregationTask:
 
 
 class DataAnalyzingTask:
-    def __init__(self, df):
+    def __init__(self, df: pd.DataFrame):
         self.df = df
 
-    def analyze_data(self):
+    def analyze_data(self) -> str:
         max_avg_temp = self.df["Средняя Температура"].max()
 
         cities_with_max_temp = self.df[self.df["Средняя Температура"] == max_avg_temp]
