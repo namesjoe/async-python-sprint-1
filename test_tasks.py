@@ -1,6 +1,5 @@
 import pytest
 import pandas as pd
-import numpy as np
 from tasks import DataCalculationTask, DataAggregationTask, DataAnalyzingTask
 
 
