@@ -28,7 +28,6 @@ class DataFetchingTask:
                 self.weather_results[city] = weather_data
             except BaseException as e:
                 logger.error(f"Ошибка по городоу {city}: {str(e)}")
-                pass
             finally:
                 self.queue.task_done()
 
